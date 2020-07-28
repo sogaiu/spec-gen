@@ -6,4 +6,7 @@
   :dependencies [[org.clojure/clojure "1.9.0"]]
   :main ^:skip-aot spec-gen.core
   :target-path "target/%s"
-  :profiles {:uberjar {:aot :all}})
+  :profiles {:socket-repl
+             {:jvm-opts
+              ["-Dclojure.server.repl={:port 7650 :accept clojure.core.server/repl}"]}
+             :uberjar {:aot :all}})
