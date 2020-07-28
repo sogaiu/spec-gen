@@ -156,30 +156,77 @@
   ;; This first comment-block illustrates some spec-generation
   ;; The next comment-block shows you a new way of creating
   ;; specs by running your program and growing specs organically
-  
-  
+
   ;; Some functions used to generate specs  
   ;; Probably not for end-users
   (gen-nested-spec atom-coll-fn-specs [1 2 3])
+  ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/number?)
+
+  ;; XXX: content of resulting list seems inconsistent depending on
+  ;;      execution...had to change actual value based on observation
+  ;;      via lein invocation :(
   (gen-nested-spec atom-coll-fn-specs [1 2 3 "string" ["hej"]])
+  #_ (list 'clojure.spec.alpha/coll-of
+           (list 'clojure.spec.alpha/or
+                 :kind-0 (list 'clojure.spec.alpha/coll-of
+                               #'clojure.core/string?)
+                 :string-1 #'clojure.core/string?
+                 :number-2 #'clojure.core/number?))
+
   (gen-nested-spec atom-coll-fn-specs 5)
-  
+  ;; => #'clojure.core/number?
+
   ;; Generates a spec ::string2 based on the value
   (spec-it! ::string2 (String. "hej"))
-  (s/explain ::string2 (String. "wat"))
-  (s/explain ::string2 "hehe")
-  (s/explain ::string2 123)
-  
+  ;; => :spec-gen.core/string2
+
+  (with-out-str
+    (s/explain ::string2 (String. "wat")))
+  ;; => "Success!\n"
+
+  (with-out-str
+    (s/explain ::string2 "hehe"))
+  ;; => "Success!\n"
+
+  (with-out-str
+    (s/explain ::string2 123))
+  ;; => "val: 123 fails spec: :spec-gen.core/string2 predicate: #'clojure.core/string?\n"
+
   (spec-it! ::file (io/file "Example.txt"))
-  (s/explain ::file "wat")
-  (s/explain ::file (io/file "wat"))
-  (s/explain ::file nil)
-  (s/explain ::file 123)
-  (s/explain ::file (io/file "Yoo.html"))
-  
-  (spec-it! ::cool [1 2 3]) ;;=> ::cool
-  (s/valid? ::cool [5 6]) ;;=> true
-  (s/valid? ::cool [5 6 "HUE"]) ;;=> false
+  ;; => :spec-gen.core/file
+
+  (str/starts-with? (with-out-str
+                      (s/explain ::file "wat"))
+                    "val: \"wat\" fails spec: :spec-gen.core/file predicate:")
+  ;; => true
+
+  (with-out-str
+    (s/explain ::file (io/file "wat")))
+  ;; => "Success!\n"
+
+  (str/starts-with? (with-out-str
+                      (s/explain ::file nil))
+                    "val: nil fails spec: :spec-gen.core/file predicate:")
+  ;; => true
+
+  (str/starts-with? (with-out-str
+                      (s/explain ::file 123))
+                    "val: 123 fails spec: :spec-gen.core/file predicate:")
+  ;; => true
+
+  (with-out-str
+    (s/explain ::file (io/file "Yoo.html")))
+  ;; => "Success!\n"
+
+  (spec-it! ::cool [1 2 3])
+  ;; => :spec-gen.core/cool
+
+  (s/valid? ::cool [5 6])
+  ;; => true
+
+  (s/valid? ::cool [5 6 "HUE"])
+  ;; => false
+
   )
 
 
