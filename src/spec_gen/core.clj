@@ -49,12 +49,11 @@
 
 (defn gen-type-spec
   [type]
-  (eval
-   `(s/def
-      ~(keyword (str *ns*)
-                (.getName type))
-      ~(fn [o]
-         (instance? type o)))))
+  (eval `(s/def
+           ~(keyword (str *ns*)
+                     (.getName type))
+           ~(fn [o]
+              (instance? type o)))))
 
 (comment
 
@@ -118,35 +117,44 @@
 (def ^:dynamic *or-limit* 5)
 
 (defn specs->sor
-  [set-of-specs]
-  (let [n (count set-of-specs)]
+  [specs]
+  (let [n (count specs)
+        name-spec (fn [idx a-spec]
+                    (str (cond
+                           (keyword? a-spec)
+                           (name a-spec)
+                           ;;
+                           (var? a-spec)
+                           (str/replace (name (:name (meta a-spec)))
+                                        "?" "")
+                           ;;
+                           :else
+                           "kind")
+                         "-"
+                         idx))]
     (cond
       (= n 1)
-      (first set-of-specs)
+      (first specs)
       ;;
       (< n *or-limit*)
       `(s/or
-        ~@(->> set-of-specs
-               (map-indexed
-                #(vector
-                  (keyword (str
-                            (cond
-                              (keyword? %2)
-                              (name %2)
-                              ;;
-                              (var? %2)
-                              (str/replace (name (:name (meta %2)))
-                                           "?" "")
-                              ;;
-                              :else
-                              "kind")
-                            "-"
-                            %1))
-                  %2))
+        ~@(->> specs
+               (map-indexed (fn [idx a-spec]
+                              [(keyword (name-spec idx a-spec))
+                               a-spec]))
                (apply concat)))
       ;;
       :else
       `any?)))
+
+(comment
+
+  (specs->sor [#'number? #'string?])
+  #_ (list 'clojure.spec.alpha/or
+           :number-0 #'clojure.core/number?
+           :string-1 #'clojure.core/string?)
+
+  )
 
 (defn gen-list-spec
   [specs l]
@@ -197,17 +205,32 @@
   (eval `(s/def ~name
            ~(gen-nested-spec atom-coll-fn-specs value))))
 
+(comment
 
+  (spec-it! ::cool [1 2 3])
+  ;; => ::cool
+
+  (s/valid? ::cool [8 9])
+  ;; => true
+
+  )
 
 ;; ==================== Generate specs for functions ==============
 
 
 (defn args->specs
   "args is a map, with the keys being symbols, and vals being values.
-  E.g. (args-list->specs {'x 10, 'y 20})"
+  E.g. (args->specs specs {'x 10, 'y 20})"
   [specs args]
   (for [[arg value] args]
     [arg (gen-nested-spec specs value)]))
+
+(comment
+
+  (args->specs atom-coll-fn-specs {'x 10 'y 20})
+  ;; => (list ['x #'clojure.core/number?] ['y #'clojure.core/number?])
+
+  )
 
 (defn args-list->specs
   [specs args-list]
@@ -244,9 +267,20 @@
      syms)))
 
 (defn var->sym
-  "Feels a bit hacky."
+  "Returns a symbol for a var."
   [v]
-  (symbol (apply str (drop 2 (str v)))))
+  ;; XXX: Feels a bit hacky
+  (symbol (apply str (drop 2 (str v))))
+  ;; .toSymbol exists in 1.10.something
+  ;;(.toSymbol v)
+  )
+
+(comment
+
+  (var->sym #'alias-syms)
+  ;; => 'spec-gen.core/alias-syms
+
+  )
 
 (defn fdef-one
   [f-var call-data]
@@ -256,19 +290,22 @@
                  :ret (->> (map :ret call-data)
                            (map (partial gen-nested-spec atom-coll-fn-specs))
                            (into #{})
-                           specs->sor)}]
-    (let [{:keys [args ret]} f-specs]
-      `(s/fdef ~(var->sym f-var)
-         :args
-         (s/cat ~@(apply concat (map (fn [[sym spec]] [(keyword sym) spec]) args)))
-         :ret ~ret))))
+                           specs->sor)}
+        {:keys [args ret]} f-specs]
+    `(s/fdef ~(var->sym f-var)
+       :args
+       (s/cat ~@(apply concat
+                       (map (fn [[sym spec]]
+                              [(keyword sym) spec])
+                            args)))
+       :ret ~ret)))
 
 (comment
   ;; This first comment-block illustrates some spec-generation
   ;; The next comment-block shows you a new way of creating
   ;; specs by running your program and growing specs organically
 
-  ;; Some functions used to generate specs  
+  ;; Some functions used to generate specs
   ;; Probably not for end-users
   (gen-nested-spec atom-coll-fn-specs [1 2 3])
   ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/number?)
@@ -341,14 +378,14 @@
   ;; Here follows a tutorial on how to use
   ;; spec-gen together with stored function data
   ;; in this case, we store the data using `miracle.save`
-  
+
   ;; First we need to store some function calls
   (require '[miracle.save :refer [f-saves save-ns* save-var* unsave-ns*]])
   (reset! f-saves {}) ;; Just in case you've already saved some data
-  
+
   ;; This starts storing all args and return values of all functions in this namespace
   (save-ns* *ns*)
-  
+
   ;; This generates specs for each arg
   ;; Though right now we only use it to exercise our functions
   ;; and generate data
@@ -360,30 +397,30 @@
     '([x [30 "wat" :hehe]], [y 20])
     '([x [30 "wat" 'omg]], [y 20])
     '([x [30 "wat" {:ho 10}]], [y 20])])
-  
+
   ;; We don't need any more data right now
   (unsave-ns* *ns*)
-  
+
   ;; If you want to, you can double check what data we stored
   ;; it's kind of hard to read since it can be a lot of data
   (def fs (first @f-saves))
   (pp/pprint fs)
-  
+
   ;; We can generate fdefs from this data though!
   (alias-syms (apply fdef-one fs))
-  
+
   ;; Now, we want to generate specs for all the stared functions!
   (doseq [[f-var call-data] @f-saves]
     (eval (fdef-one f-var call-data)))
-  
+
   ;; And then instrument it
   (st/instrument)
-  
-  
+
+
   ;; If you want to check all fdefs, just pprint instead of eval. :)
   (doseq [[f-var call-data] @f-saves]
     (pp/pprint (alias-syms (fdef-one f-var call-data))))
-  
+
   ;; Here's an example on how to persist the fdefs
   (do (create-ns 'spec-gen.fdefs)
       (in-ns 'spec-gen.fdefs)
@@ -399,8 +436,8 @@
                  (sg/alias-syms (sg/fdef-one f-var call-data)))
                 (println))))
       (in-ns 'spec-gen.core))
-  
-  
+
+
   ;; Let's call the earlier function again
   (args-list->specs
    atom-coll-fn-specs
@@ -410,7 +447,7 @@
     '([x [30 "wat" :hehe]], [y 20])
     '([x [30 "wat" 'omg]], [y 20])
     '([x [30 "wat" {:ho 10}]], [y 20])])
-  
+
   ;; And with some weird arguments
   (args-list->specs
    123
@@ -420,7 +457,7 @@
     '([x [30 "wat" :hehe]], [y 20])
     '([x [30 "wat" 'omg]], [y 20])
     '([x [30 "wat" {:ho 10}]], [y 20])])
-  
+
   (args-list->specs
    ["hehe"]
    ['([x [30 40]], [y 20])
@@ -429,68 +466,68 @@
     '([x [30 "wat" :hehe]], [y 20])
     '([x [30 "wat" 'omg]], [y 20])
     '([x [30 "wat" {:ho 10}]], [y 20])])
-  
-  
-  
-  
-  
-  
+
+
+
+
+
+
   ;; Please try creating some specs on your own!
   ;; Make changes `my-func` and evaluate the do-block and evaluate it as a whole :)
   (do (st/unstrument)
       (reset! f-saves {})
-      
+
       (defn my-func
         [x]
         ;; Put code here!
         (+ x x))
       (save-var* #'my-func)
-      
+
       ;; Gather data...
       (my-func "hej")
       (my-func 20)
       (my-func 30)
-      
+
       (def fd (alias-syms (fdef-one #'my-func (get @f-saves #'my-func))))
       (pp/pprint fd)
       (eval fd)
       (st/instrument `my-func)
-      
+
       (my-func 5))
-  
+
   (my-func "hehe")  ;; Whoah! Spec assertion error
-  
+
   ;; Try making some changes to my-func and call it with new values
   ;; in order to get it to work with strings as well :)
   ;; if you don't know how, I give an example down below.
-  
-  
-  
-  
-  
+
+
+
+
+
   ;; If you want to make your function more flexible, you can unstrument it,
   ;; exercise it some more, then run `fdef-one` again, and instrument again
   ;; That way you can grow your fdef's organically :)
-  
+
   ;; Here's an example, if we start out with the `my-func` taking only numbers...
   (defn my-func [x] (if (number? x) (+ x x) (map #(str "hello " % "!") x)))
   (save-var* #'my-func) ;; Need to resave when we overwrite the value in the var
   (st/instrument `my-func)
   (my-func 5) ;; works
   (my-func "hej") ;; spec error! (unless you already made `my-func` work with strings!)
-  
+
   ;; Gosh darn it, we know we can use this with any `map`able value...
-  
+
   (st/unstrument `my-func)
   (my-func "hej")
   ;; There we go! But we want it instrumented again
-  
+
   (eval (fdef-one #'my-func (get @f-saves #'my-func)))
   (st/instrument `my-func)
   (my-func "hej") ;; now we've expanded the original spec!
-  
+
   ;; if you want to look at the generated spec as text, you just pprint it again:
   (pp/pprint (alias-syms (fdef-one #'my-func (get @f-saves #'my-func))))
-  
+
   ;; I hope you found this interesting!
   )
