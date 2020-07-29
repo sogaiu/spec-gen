@@ -2,12 +2,14 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.test.alpha :as st]
             [clojure.walk :refer [postwalk]]
+            ;; XXX: apparently not used
             [clojure.set :as set]
             [clojure.string :as str]
             [clojure.pprint :as pp]
             [clojure.java.io :as io])
   (:gen-class))
 
+;; XXX: not used in this file or elsewhere apparently
 (def spec-specs
   [(s/def ::spec #(some? (s/get-spec %)))])
 
@@ -32,18 +34,84 @@
 
 (def atom-coll-fn-specs (concat atom-specs coll-specs fn-specs))
 
+(comment
+
+  atom-coll-fn-specs
+  #_ [#'clojure.core/number? #'clojure.core/string?
+      #'clojure.core/keyword? #'clojure.core/symbol?
+      #'clojure.core/map? #'clojure.core/set?
+      #'clojure.core/vector? #'clojure.core/list?
+      :spec-gen.core/lazy-seq #'clojure.core/coll?
+      #'clojure.core/seq? #'clojure.core/seqable?
+      :spec-gen.core/ifn]
+
+  )
+
 (defn gen-type-spec
   [type]
-  (eval `(s/def ~(keyword (str *ns*) (.getName type)) ~(fn [o] (instance? type o)))))
+  (eval
+   `(s/def
+      ~(keyword (str *ns*)
+                (.getName type))
+      ~(fn [o]
+         (instance? type o)))))
+
+(comment
+
+  (gen-type-spec (type 5))
+  ;; => :spec-gen.core/java.lang.Long
+
+  (gen-type-spec (type :hi))
+  ;; => :spec-gen.core/clojure.lang.Keyword
+
+  )
 
 (defn check-specs
   [check-f specs value]
-  (map #(vector % (check-f % value)) specs))
+  (map #(vector % (check-f % value))
+       specs))
 
-(def valid-specs (partial check-specs s/valid?))
+(comment
+
+  (check-specs s/valid? atom-coll-fn-specs 5)
+  #_ [[#'clojure.core/number? true] [#'clojure.core/string? false]
+      [#'clojure.core/keyword? false] [#'clojure.core/symbol? false]
+      [#'clojure.core/map? false] [#'clojure.core/set? false]
+      [#'clojure.core/vector? false] [#'clojure.core/list? false]
+      [:spec-gen.core/lazy-seq false] [#'clojure.core/coll? false]
+      [#'clojure.core/seq? false] [#'clojure.core/seqable? false]
+      [:spec-gen.core/ifn false]]
+
+  )
+
+(def valid-specs
+  (partial check-specs s/valid?))
+
+(comment
+
+  (valid-specs atom-coll-fn-specs 5)
+  #_ [[#'clojure.core/number? true] [#'clojure.core/string? false]
+      [#'clojure.core/keyword? false] [#'clojure.core/symbol? false]
+      [#'clojure.core/map? false] [#'clojure.core/set? false]
+      [#'clojure.core/vector? false] [#'clojure.core/list? false]
+      [:spec-gen.core/lazy-seq false] [#'clojure.core/coll? false]
+      [#'clojure.core/seq? false] [#'clojure.core/seqable? false]
+      [:spec-gen.core/ifn false]]
+
+  )
 
 (defn first-spec [specs value]
-  (first (first (filter second (valid-specs specs value)))))
+  (->> (valid-specs specs value)
+       (filter second)
+       first
+       first))
+
+(comment
+
+  (first-spec atom-coll-fn-specs 5)
+  ;; => #'clojure.core/number?
+
+  )
 
 (declare gen-nested-spec)
 
@@ -53,40 +121,81 @@
   [set-of-specs]
   (let [n (count set-of-specs)]
     (cond
-      (= n 1) (first set-of-specs)
+      (= n 1)
+      (first set-of-specs)
+      ;;
       (< n *or-limit*)
       `(s/or
         ~@(->> set-of-specs
                (map-indexed
                 #(vector
-                  (keyword
-                   (str
-                    (cond
-                      (keyword? %2) (name %2)
-                      (var? %2) (str/replace (name (:name (meta %2))) "?" "")
-                      :default "kind")
-                    "-"
-                    %1))
+                  (keyword (str
+                            (cond
+                              (keyword? %2)
+                              (name %2)
+                              ;;
+                              (var? %2)
+                              (str/replace (name (:name (meta %2)))
+                                           "?" "")
+                              ;;
+                              :else
+                              "kind")
+                            "-"
+                            %1))
                   %2))
                (apply concat)))
-      :default `any?)))
+      ;;
+      :else
+      `any?)))
 
 (defn gen-list-spec
   [specs l]
-  `(s/coll-of ~(specs->sor (into #{} (map #(gen-nested-spec specs %) l)))))
+  `(s/coll-of ~(specs->sor (distinct
+                            (map #(gen-nested-spec specs %) l)))))
+
+(comment
+
+  (gen-list-spec atom-coll-fn-specs [:a :b])
+  ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/keyword?)
+
+  (gen-list-spec atom-coll-fn-specs '(1 2 3))
+  ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/number?)
+
+  (gen-list-spec atom-coll-fn-specs (map inc (range 21)))
+  ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/number?)
+
+  )
 
 (defn gen-nested-spec
   [specs value]
   (let [res (first-spec specs value)
         res (cond
-              (some #{res} [#'vector? #'list?]) (gen-list-spec specs value)
-              (= res ::lazy-seq) (gen-list-spec specs (take 100 value))
-              :default res)]
+              (some #{res} [#'vector? #'list?])
+              (gen-list-spec specs value)
+              ;;
+              (= res ::lazy-seq)
+              (gen-list-spec specs (take 100 value))
+              ;;
+              :else
+              res)]
     (if res
       res
       (gen-type-spec (type value)))))
 
-(defn spec-it! [name value] (eval `(s/def ~name ~(gen-nested-spec atom-coll-fn-specs value))))
+(comment
+
+  (gen-nested-spec atom-coll-fn-specs 5)
+  ;; => #'clojure.core/number?
+
+  (gen-nested-spec atom-coll-fn-specs [5])
+  ;; => '(clojure.spec.alpha/coll-of #'clojure.core/number?)
+
+  )
+
+(defn spec-it!
+  [name value]
+  (eval `(s/def ~name
+           ~(gen-nested-spec atom-coll-fn-specs value))))
 
 
 
@@ -116,8 +225,9 @@
                          (into {}))]
     (postwalk
      #(cond
-        (not (symbol? %)) %
-        
+        (not (symbol? %))
+        %
+        ;;
         (some-> (namespace %)
                 symbol
                 name->short)
@@ -125,11 +235,12 @@
                              symbol
                              name->short))
                 (name %))
-        
-        (= (namespace %)  (ns-name *ns*))
+        ;;
+        (= (namespace %) (ns-name *ns*))
         (name %)
-        
-        :default %)
+        ;;
+        :else
+        %)
      syms)))
 
 (defn var->sym
@@ -162,23 +273,20 @@
   (gen-nested-spec atom-coll-fn-specs [1 2 3])
   ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/number?)
 
-  ;; XXX: content of resulting list seems inconsistent depending on
-  ;;      execution...had to change actual value based on observation
-  ;;      via lein invocation :(
   (gen-nested-spec atom-coll-fn-specs [1 2 3 "string" ["hej"]])
   #_ (list 'clojure.spec.alpha/coll-of
            (list 'clojure.spec.alpha/or
-                 :kind-0 (list 'clojure.spec.alpha/coll-of
-                               #'clojure.core/string?)
+                 :number-0 #'clojure.core/number?
                  :string-1 #'clojure.core/string?
-                 :number-2 #'clojure.core/number?))
+                 :kind-2 (list 'clojure.spec.alpha/coll-of
+                               #'clojure.core/string?)))
 
   (gen-nested-spec atom-coll-fn-specs 5)
   ;; => #'clojure.core/number?
 
   ;; Generates a spec ::string2 based on the value
   (spec-it! ::string2 (String. "hej"))
-  ;; => :spec-gen.core/string2
+  ;; => ::string2
 
   (with-out-str
     (s/explain ::string2 (String. "wat")))
@@ -219,7 +327,7 @@
   ;; => "Success!\n"
 
   (spec-it! ::cool [1 2 3])
-  ;; => :spec-gen.core/cool
+  ;; => ::cool
 
   (s/valid? ::cool [5 6])
   ;; => true
@@ -228,7 +336,6 @@
   ;; => false
 
   )
-
 
 (comment
   ;; Here follows a tutorial on how to use
