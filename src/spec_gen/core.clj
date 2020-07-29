@@ -188,7 +188,7 @@
   ;; => #'clojure.core/number?
 
   (gen-nested-spec atom-coll-fn-specs [5])
-  ;; => '(clojure.spec.alpha/coll-of #'clojure.core/number?)
+  ;; => (list 'clojure.spec.alpha/coll-of #'clojure.core/number?)
 
   )
 
@@ -343,7 +343,7 @@
   ;; in this case, we store the data using `miracle.save`
   
   ;; First we need to store some function calls
-  (require '[miracle.save :refer :all])
+  (require '[miracle.save :refer [f-saves save-ns* save-var* unsave-ns*]])
   (reset! f-saves {}) ;; Just in case you've already saved some data
   
   ;; This starts storing all args and return values of all functions in this namespace
@@ -494,9 +494,3 @@
   
   ;; I hope you found this interesting!
   )
-
-
-
-
-
-
